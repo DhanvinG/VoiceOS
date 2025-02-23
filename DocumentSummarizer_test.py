@@ -1,52 +1,22 @@
 import os
 import re
 import time
-import torch
-import nltk
-import pyttsx3
+import openai
 import pyautogui
 import pyperclip
 from nltk.tokenize import sent_tokenize
-from transformers import pipeline, BartTokenizer
+from pydub import AudioSegment
+from pydub.playback import play
 
 # --------------------------------------------------------------------------
 # 1. Environment Configuration
 # --------------------------------------------------------------------------
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'  # Enables synchronous error reporting
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppresses TensorFlow logs
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Disables oneDNN optimizations
+
+openai.api_key = yourkey
 
 # --------------------------------------------------------------------------
-# 2. Initialization
-# --------------------------------------------------------------------------
-tokenizer = BartTokenizer.from_pretrained("facebook/bart-large-cnn")
-tts_engine = pyttsx3.init()
-
-def configure_tts(rate=150, volume=1.0, voice_id=None):
-    try:
-        tts_engine.setProperty('rate', rate)
-        tts_engine.setProperty('volume', volume)
-        if voice_id:    
-            tts_engine.setProperty('voice', voice_id)
-    except Exception as e:
-        print(f"[ERROR] Failed to configure TTS properties. Error: {e}")
-
-def set_voice():
-    voices = tts_engine.getProperty('voices')
-    for voice in voices:
-        if "Microsoft Zira Desktop" in voice.name:
-            tts_engine.setProperty('voice', voice.id)
-            print("Voice set to Microsoft Zira Desktop.")
-            return
-    print("[WARNING] Microsoft Zira Desktop voice not found. Using default voice.")
-
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt')
-
-# --------------------------------------------------------------------------
-# 3. Utility Functions
+# 2. Utility Functions
 # --------------------------------------------------------------------------
 def get_selected_text():
     """
@@ -64,99 +34,63 @@ def clean_text(text):
     text = re.sub(r'[^\x00-\x7F]+', ' ', text)
     return text.strip()
 
-def split_text(text, max_tokens=800):
-    sentences = sent_tokenize(text)
-    chunks = []
-    current_chunk = ""
-    current_tokens = 0
-
-    for sentence in sentences:
-        sentence_tokens = len(tokenizer.encode(sentence, add_special_tokens=False))
-        if current_tokens + sentence_tokens > max_tokens:
-            if current_chunk:
-                chunks.append(current_chunk.strip())
-                current_chunk = sentence
-                current_tokens = sentence_tokens
-            else:
-                words = sentence.split()
-                for word in words:
-                    word_tokens = len(tokenizer.encode(word, add_special_tokens=False))
-                    if current_tokens + word_tokens > max_tokens:
-                        if current_chunk:
-                            chunks.append(current_chunk.strip())
-                            current_chunk = word
-                            current_tokens = word_tokens
-                        else:
-                            chunks.append(word)
-                            current_chunk = ""
-                            current_tokens = 0
-                    else:
-                        current_chunk += " " + word
-                        current_tokens += word_tokens
-        else:
-            current_chunk += " " + sentence
-            current_tokens += sentence_tokens
-
-    if current_chunk:
-        chunks.append(current_chunk.strip())
-    return chunks
-
-def explain_text(text, batch_size=8, target_sentences=4, max_tokens=160, min_tokens=120):
+# --------------------------------------------------------------------------
+# 3. GPT-4 Summarization (Updated for OpenAI v1.0.0+)
+# --------------------------------------------------------------------------
+def summarize_with_gpt(text, target_sentences=4):
+    """
+    Uses GPT-4 to summarize the given text.
+    """
     try:
-        summarizer = pipeline(
-            "summarization",
-            model="facebook/bart-large-cnn",
-            framework="pt",
-            device=0 if torch.cuda.is_available() else -1
+        print("[INFO] Sending text to GPT-4 for summarization...")
+
+        response = openai.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that summarizes text."},
+                {"role": "user", "content": f"Summarize the following text in {target_sentences} sentences:\n\n{text}"}
+            ]
         )
 
-        device = "cuda:0" if torch.cuda.is_available() else "CPU"
-        print(f"Device set to use {device}")
-
-        chunks = split_text(text, max_tokens=800)
-        print(f"[DEBUG] Number of chunks: {len(chunks)}")
-
-        batched_chunks = [chunks[i:i + batch_size] for i in range(0, len(chunks), batch_size)]
-        summaries = []
-
-        for batch_num, batch in enumerate(batched_chunks, 1):
-            try:
-                print(f"[DEBUG] Summarizing batch {batch_num} with {len(batch)} chunks.")
-                batch_summaries = summarizer(
-                    batch,
-                    max_length=max_tokens,
-                    min_length=min_tokens,
-                    num_beams=4,
-                    do_sample=False
-                )
-                for summary in batch_summaries:
-                    summaries.append(summary['summary_text'])
-            except Exception as e:
-                print(f"[ERROR] Summarization failed for batch {batch_num}: {e}")
-                continue
-
-        if not summaries:
-            print("[INFO] No summaries generated.")
-            return "[INFO] Unable to explain the text."
-
-        full_summary = ' '.join(summaries)
-        sentences = sent_tokenize(full_summary)
-        trimmed_summary = ' '.join(sentences[:target_sentences])
-        return trimmed_summary
+        summary = response.choices[0].message.content.strip()
+        return summary
     except Exception as e:
-        print(f"[ERROR] Summarization failed: {e}")
-        return "[INFO] Unable to explain the text."
-
-def speak_text(text):
-    try:
-        set_voice()
-        tts_engine.say(text)
-        tts_engine.runAndWait()
-    except Exception as e:
-        print(f"[ERROR] Failed to speak text. Error: {e}")
+        print(f"[ERROR] GPT-4 summarization failed: {e}")
+        return "[INFO] Unable to summarize the text."
 
 # --------------------------------------------------------------------------
-# 4. Main Function
+# 4. ChatGPT Voice TTS (Updated for OpenAI v1.0.0+)
+# --------------------------------------------------------------------------
+def speak_text(text):
+    """
+    Uses OpenAI's text-to-speech API to read the text aloud using ChatGPT's voice.
+    """
+    try:
+        print("[INFO] Generating speech with ChatGPT Voice...")
+
+        # OpenAI's TTS API call
+        response = openai.audio.speech.create(
+            model="tts-1",
+            voice="onyx",  # Options: 'alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'
+            input=text
+        )
+
+        # Save the response as an audio file
+        audio_path = "chatgpt_voice_output.mp3"
+        with open(audio_path, "wb") as audio_file:
+            audio_file.write(response.content)  # Updated to response.content
+
+        # Load and play the audio
+        audio = AudioSegment.from_file(audio_path, format="mp3")
+        play(audio)
+
+        print("[INFO] Speech played successfully.")
+
+    except Exception as e:
+        print(f"[ERROR] Failed to generate speech: {e}")
+
+# --------------------------------------------------------------------------
+# 5. Main Function
 # --------------------------------------------------------------------------
 def main():
     print("[INFO] Automatically summarizing all text in the active window...")
@@ -166,13 +100,12 @@ def main():
 
     if selected_text:
         print("[DEBUG] Selected Text:", selected_text[:200])  # Print a sample of the text
-        summary = explain_text(selected_text, batch_size=8, target_sentences=4)
+        summary = summarize_with_gpt(selected_text, target_sentences=4)  # Uses GPT-4
         print("\n[SUMMARY]:")
         print(summary)
-        speak_text(summary)
+        speak_text(summary)  # Uses ChatGPT Voice
     else:
         print("[INFO] No text selected or copied.")
 
 if __name__ == "__main__":
-    set_voice()
     main()
