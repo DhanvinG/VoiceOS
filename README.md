@@ -1,3 +1,6 @@
+![Image](https://github.com/user-attachments/assets/3de3c49e-9b83-434a-8806-fe1a2420136e)
+
+
 ## What is VoiceOS?
 
 VoiceOS is an innovative AI-powered voice assistant designed to redefine computer interaction. By leveraging state-of-the-art speech recognition, natural language processing, and text-to-speech technologies, VoiceOS lets you control your computer completely hands-free. In just a few months, we transformed a simple idea into a comprehensive system that manages applications, documents, web content, and emails—all via voice commands.
